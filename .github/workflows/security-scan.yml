@@ -14,13 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the scan target (Juice Shop)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: juice-shop/juice-shop
           path: target
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -31,7 +31,50 @@ jobs:
         run: semgrep scan --config p/default --json --output semgrep.json target
 
       - name: Upload report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: semgrep-report
           path: semgrep.json
+
+  trivy:
+    name: SCA (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan the Juice Shop image for vulnerable libraries
+        run: |
+          docker run --rm -v "$PWD:/work" aquasec/trivy:latest image \
+            --format json --output /work/trivy.json \
+            bkimminich/juice-shop:latest
+
+      - name: Upload report
+        uses: actions/upload-artifact@v6
+        with:
+          name: trivy-report
+          path: trivy.json
+
+  gitleaks:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Juice Shop with full history
+        uses: actions/checkout@v5
+        with:
+          repository: juice-shop/juice-shop
+          path: target
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo gitleaks/gitleaks --pattern '*linux_x64.tar.gz' --output gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      - name: Run Gitleaks
+        run: ./gitleaks detect --source target --report-format json --report-path gitleaks.json --exit-code 0
+
+      - name: Upload report
+        uses: actions/upload-artifact@v6
+        with:
+          name: gitleaks-report
+          path: gitleaks.json
