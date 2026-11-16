@@ -10,7 +10,7 @@ Usage (in the pipeline):  python3 remediate.py
 """
 import json
 import os
-import urllib.request
+import urllib.error
 
 API_URL = "https://models.github.ai/inference/chat/completions"
 MODEL = os.environ.get("TRIAGE_MODEL", "openai/gpt-4o-mini")
@@ -52,14 +52,20 @@ def ask_model(f, token):
             {"role": "user", "content": "Finding:\n" + json.dumps(facts, indent=2)},
         ],
     }).encode()
-    request = urllib.request.Request(API_URL, data=body, headers={
+    request = urllib.request.Request(API_URL, data=body, method="POST", headers={
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "Accept": "application/vnd.github+json",
+        "Accept": "application/json",
     })
-    with urllib.request.urlopen(request, timeout=60) as response:
-        answer = json.load(response)
-    return answer["choices"][0]["message"]["content"].strip()
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            status, text = response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        status, text = error.code, error.read().decode("utf-8", "replace")
+    try:
+        return json.loads(text)["choices"][0]["message"]["content"].strip()
+    except Exception:
+        raise RuntimeError(f"HTTP {status}, model={MODEL}, reply starts: {text[:300]!r}")
 
 
 def main():
