@@ -127,10 +127,36 @@ jobs:
       - name: Enrich, score and report
         run: python3 enrich.py
 
-      - name: Draft AI remediation guidance
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build AI prompt from top findings
         run: python3 remediate.py
+
+      - name: Draft AI remediation guidance
+        id: ai
+        continue-on-error: true
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o-mini
+          max-tokens: 1200
+          system-prompt: You are an application security engineer writing remediation guidance for developers.
+          prompt-file: ai_prompt.txt
+
+      - name: Add guidance to report
+        if: steps.ai.outcome == 'success'
+        run: |
+          response="${{ steps.ai.outputs.response-file }}"
+          if [ -s "$response" ]; then
+            {
+              echo ""
+              echo "## AI-drafted remediation guidance"
+              echo ""
+              echo "Drafted by an LLM through GitHub Models for the top 5 distinct findings. Review before applying: this text is machine-generated."
+              echo ""
+              cat "$response"
+              echo ""
+            } >> report.md
+          else
+            echo "The model returned an empty answer; report left unchanged."
+          fi
 
       - name: Show report on the run page
         run: cat report.md >> "$GITHUB_STEP_SUMMARY"

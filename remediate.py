@@ -1,30 +1,30 @@
-"""Vulnerability triage engine - stage 3: AI-drafted remediation guidance.
+"""Vulnerability triage engine - stage 3: prepare AI remediation guidance.
 
-Reads prioritized.json (made by enrich.py), picks the top distinct findings,
-asks an LLM for short fix guidance on each, and appends it to report.md.
+Reads prioritized.json (made by enrich.py), picks the top distinct findings
+and writes ai_prompt.txt. The pipeline then sends that prompt to an LLM
+through GitHub's official actions/ai-inference action and appends the
+answer to report.md.
 
-Uses GitHub Models, which is free inside GitHub Actions and needs no extra
-API key. No secret values are ever sent: triage.py only stores a hash.
+No secret values are ever sent: triage.py only stores a hash of each secret.
 
-Usage (in the pipeline):  python3 remediate.py
+Usage:  py remediate.py
 """
 import json
-import os
-import urllib.error
-import urllib.request
 
-API_URL = "https://models.github.ai/inference/chat/completions"
-MODEL = os.environ.get("TRIAGE_MODEL", "openai/gpt-4o-mini")
 TOP_N = 5
+FIELDS = ("priority", "tool", "category", "title", "severity", "location", "cve", "cwe", "detail")
 
-SYSTEM_PROMPT = (
-    "You are an application security engineer writing remediation guidance "
-    "for developers. Be specific and brief. Do not invent details that are "
-    "not in the finding. Answer in exactly three short labelled lines:\n"
-    "Risk: what an attacker could do.\n"
-    "Fix: the concrete change to make.\n"
-    "Verify: how to confirm the fix worked."
-)
+INSTRUCTIONS = """Write remediation guidance for each security finding listed below.
+Be specific and brief. Do not invent details that are not in the finding.
+
+For every finding, output exactly this Markdown and nothing else:
+
+### [<priority>] <short title, at most 10 words>
+Location: `<location>`
+- **Risk:** one sentence on what an attacker could do.
+- **Fix:** one or two sentences on the concrete change to make.
+- **Verify:** one sentence on how to confirm the fix worked.
+"""
 
 
 def pick_top(findings, n):
@@ -41,67 +41,19 @@ def pick_top(findings, n):
     return picked
 
 
-def ask_model(f, token):
-    facts = {key: f.get(key) for key in
-             ("tool", "category", "title", "severity", "location", "cve", "cwe", "detail")}
-    body = json.dumps({
-        "model": MODEL,
-        "temperature": 0.2,
-        "max_tokens": 250,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "Finding:\n" + json.dumps(facts, indent=2)},
-        ],
-    }).encode()
-    request = urllib.request.Request(API_URL, data=body, method="POST", headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            status, text = response.status, response.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as error:
-        status, text = error.code, error.read().decode("utf-8", "replace")
-    try:
-        return json.loads(text)["choices"][0]["message"]["content"].strip()
-    except Exception:
-        raise RuntimeError(f"HTTP {status}, model={MODEL}, reply starts: {text[:300]!r}")
-
-
 def main():
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        print("No GITHUB_TOKEN found - skipping AI remediation (this step runs in the pipeline).")
-        return
-
     with open("prioritized.json", encoding="utf-8") as f:
         findings = json.load(f)
 
-    lines = ["", "## AI-drafted remediation guidance", "",
-             f"Drafted by `{MODEL}` for the top {TOP_N} distinct findings. "
-             "Review before applying: this text is machine-generated.", ""]
-    written = 0
-    for f in pick_top(findings, TOP_N):
-        title = f["title"].split(",")[0][:80]
-        try:
-            advice = ask_model(f, token)
-        except Exception as error:
-            print(f"  WARNING: no guidance for '{title}' ({error})")
-            continue
-        print(f"  drafted guidance for: {title}")
-        lines += [f"### [{f['priority']}] {title}", "",
-                  f"Location: `{f['location']}`", ""]
-        lines += [line + "  " for line in advice.splitlines() if line.strip()]
-        lines.append("")
-        written += 1
+    top = pick_top(findings, TOP_N)
+    facts = [{key: f.get(key) for key in FIELDS} for f in top]
+    prompt = INSTRUCTIONS + "\nFindings:\n" + json.dumps(facts, indent=2) + "\n"
 
-    if written == 0:
-        print("No guidance was generated - report.md left unchanged.")
-        return
-    with open("report.md", "a", encoding="utf-8") as out:
-        out.write("\n".join(lines) + "\n")
-    print(f"Added guidance for {written} findings to report.md")
+    with open("ai_prompt.txt", "w", encoding="utf-8") as out:
+        out.write(prompt)
+    print(f"Wrote ai_prompt.txt with {len(top)} findings:")
+    for f in top:
+        print(f"  [{f['priority']}] {f['title'].split(',')[0][:70]}")
 
 
 if __name__ == "__main__":
