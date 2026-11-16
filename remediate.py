@@ -1,18 +1,28 @@
-"""Vulnerability triage engine - stage 3: prepare AI remediation guidance.
+"""Vulnerability triage engine - stage 3: AI-drafted remediation guidance.
 
-Reads prioritized.json (made by enrich.py), picks the top distinct findings
-and writes ai_prompt.txt. The pipeline then sends that prompt to an LLM
-through GitHub's official actions/ai-inference action and appends the
-answer to report.md.
+Reads prioritized.json (made by enrich.py), picks the top distinct findings,
+asks an LLM for short fix guidance and appends it to report.md.
 
-No secret values are ever sent: triage.py only stores a hash of each secret.
+Uses the Gemini API through its OpenAI-compatible endpoint. The API key is
+read from the GEMINI_API_KEY environment variable (a GitHub Actions secret)
+and is never written to the code or the logs. Without a key the script only
+writes ai_prompt.txt so you can see what would be sent.
+
+No secret values from the scan are ever sent: triage.py only stores a hash.
 
 Usage:  py remediate.py
 """
 import json
+import os
+import urllib.error
+import urllib.request
 
+API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+MODEL = os.environ.get("TRIAGE_MODEL", "gemini-3.8-flash")
 TOP_N = 5
 FIELDS = ("priority", "tool", "category", "title", "severity", "location", "cve", "cwe", "detail")
+
+SYSTEM_PROMPT = "You are an application security engineer writing remediation guidance for developers."
 
 INSTRUCTIONS = """Write remediation guidance for each security finding listed below.
 Be specific and brief. Do not invent details that are not in the finding.
@@ -41,6 +51,29 @@ def pick_top(findings, n):
     return picked
 
 
+def ask_model(prompt, key):
+    body = json.dumps({
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }).encode()
+    request = urllib.request.Request(API_URL, data=body, method="POST", headers={
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            status, text = response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        status, text = error.code, error.read().decode("utf-8", "replace")
+    try:
+        return json.loads(text)["choices"][0]["message"]["content"].strip()
+    except Exception:
+        raise RuntimeError(f"HTTP {status}, model={MODEL}, reply starts: {text[:300]!r}")
+
+
 def main():
     with open("prioritized.json", encoding="utf-8") as f:
         findings = json.load(f)
@@ -54,6 +87,26 @@ def main():
     print(f"Wrote ai_prompt.txt with {len(top)} findings:")
     for f in top:
         print(f"  [{f['priority']}] {f['title'].split(',')[0][:70]}")
+
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        print("\nNo GEMINI_API_KEY set - skipping the AI call.")
+        return
+
+    print(f"\nAsking {MODEL} for remediation guidance...")
+    try:
+        advice = ask_model(prompt, key)
+    except Exception as error:
+        print(f"WARNING: AI call failed, report left unchanged ({error})")
+        return
+
+    section = ["", "## AI-drafted remediation guidance", "",
+               f"Drafted by `{MODEL}` for the top {len(top)} distinct findings. "
+               "Review before applying: this text is machine-generated.", "",
+               advice, ""]
+    with open("report.md", "a", encoding="utf-8") as out:
+        out.write("\n".join(section))
+    print("Added AI remediation guidance to report.md")
 
 
 if __name__ == "__main__":
