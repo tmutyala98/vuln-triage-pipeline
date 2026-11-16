@@ -92,6 +92,14 @@ def priority(f):
     return "P4"
 
 
+def shorten(text, limit, keep_end=False):
+    """Trim long text for the table, adding ... where it was cut."""
+    text = text.replace("|", "/")
+    if len(text) <= limit:
+        return text
+    return "..." + text[-(limit - 3):] if keep_end else text[:limit - 3] + "..."
+
+
 def write_report(findings, counts):
     lines = [
         "# Vulnerability Triage Report",
@@ -107,14 +115,17 @@ def write_report(findings, counts):
         "",
         "## Top 15 findings",
         "",
-        "| # | Priority | Score | Severity | Tool | Finding | EPSS | KEV |",
-        "|---|---|---|---|---|---|---|---|",
+        "| # | Priority | Score | Severity | Tool | Finding | Location | EPSS | KEV |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for n, f in enumerate(findings[:15], start=1):
         epss = f"{f['epss'] * 100:.1f}%" if f.get("epss") is not None else "-"
-        title = f["title"].replace("|", "/")[:70]
+        title = f["title"]
+        if f["tool"] == "gitleaks":
+            title = title.split(",")[0]      # keep "Detected a Generic API Key"
         lines.append(f"| {n} | {f['priority']} | {f['score']} | {f['severity']} | {f['tool']} "
-                     f"| {title} | {epss} | {'YES' if f.get('kev') else '-'} |")
+                     f"| {shorten(title, 60)} | `{shorten(f['location'], 45, keep_end=True)}` "
+                     f"| {epss} | {'YES' if f.get('kev') else '-'} |")
     with open("report.md", "w", encoding="utf-8") as out:
         out.write("\n".join(lines) + "\n")
 
