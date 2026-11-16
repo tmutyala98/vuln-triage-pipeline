@@ -14,11 +14,15 @@ Usage:  py remediate.py
 """
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
 API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-MODEL = os.environ.get("TRIAGE_MODEL", "gemini-3.8-flash")
+# Models are tried in this order. If one is overloaded, the next is used.
+MODELS = [os.environ.get("TRIAGE_MODEL", "gemini-3.8-flash"), "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+ATTEMPTS_PER_MODEL = 2
+WAIT_SECONDS = 15
 TOP_N = 5
 FIELDS = ("priority", "tool", "category", "title", "severity", "location", "cve", "cwe", "detail")
 
@@ -51,9 +55,9 @@ def pick_top(findings, n):
     return picked
 
 
-def ask_model(prompt, key):
+def ask_model(prompt, key, model):
     body = json.dumps({
-        "model": MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -64,14 +68,27 @@ def ask_model(prompt, key):
         "Content-Type": "application/json",
     })
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             status, text = response.status, response.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         status, text = error.code, error.read().decode("utf-8", "replace")
     try:
         return json.loads(text)["choices"][0]["message"]["content"].strip()
     except Exception:
-        raise RuntimeError(f"HTTP {status}, model={MODEL}, reply starts: {text[:300]!r}")
+        raise RuntimeError(f"HTTP {status}: {' '.join(text.split())[:160]}")
+
+
+def ask_with_fallback(prompt, key):
+    """Try each model in turn, retrying once, so one busy model does not block us."""
+    for model in MODELS:
+        for attempt in range(1, ATTEMPTS_PER_MODEL + 1):
+            print(f"Asking {model} (attempt {attempt})...")
+            try:
+                return ask_model(prompt, key, model), model
+            except Exception as error:
+                print(f"  failed: {error}")
+                time.sleep(WAIT_SECONDS)
+    return None, None
 
 
 def main():
@@ -93,15 +110,14 @@ def main():
         print("\nNo GEMINI_API_KEY set - skipping the AI call.")
         return
 
-    print(f"\nAsking {MODEL} for remediation guidance...")
-    try:
-        advice = ask_model(prompt, key)
-    except Exception as error:
-        print(f"WARNING: AI call failed, report left unchanged ({error})")
+    print()
+    advice, model = ask_with_fallback(prompt, key)
+    if advice is None:
+        print("WARNING: no model answered, report left unchanged.")
         return
 
     section = ["", "## AI-drafted remediation guidance", "",
-               f"Drafted by `{MODEL}` for the top {len(top)} distinct findings. "
+               f"Drafted by `{model}` for the top {len(top)} distinct findings. "
                "Review before applying: this text is machine-generated.", "",
                advice, ""]
     with open("report.md", "a", encoding="utf-8") as out:
