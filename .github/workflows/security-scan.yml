@@ -78,3 +78,28 @@ jobs:
         with:
           name: gitleaks-report
           path: gitleaks.json
+
+            zap:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start Juice Shop
+        run: |
+          docker run -d --name juice-shop -p 3000:3000 bkimminich/juice-shop:latest
+          for i in $(seq 1 30); do
+            curl -s http://localhost:3000 > /dev/null && break
+            sleep 2
+          done
+
+      - name: Run ZAP baseline scan
+        run: |
+          chmod 777 "$PWD"
+          docker run --rm --network host -v "$PWD:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:3000 -J zap.json -I || true
+
+      - name: Upload report
+        uses: actions/upload-artifact@v6
+        with:
+          name: zap-report
+          path: zap.json
