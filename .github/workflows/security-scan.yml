@@ -79,7 +79,7 @@ jobs:
           name: gitleaks-report
           path: gitleaks.json
 
-            zap:
+  zap:
     name: DAST (OWASP ZAP)
     runs-on: ubuntu-latest
     steps:
