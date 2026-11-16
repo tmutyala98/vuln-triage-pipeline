@@ -103,3 +103,43 @@ jobs:
         with:
           name: zap-report
           path: zap.json
+
+  triage:
+    name: Triage and security gate
+    runs-on: ubuntu-latest
+    needs: [semgrep, trivy, gitleaks, zap]
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v5
+
+      - name: Download all scan reports
+        uses: actions/download-artifact@v6
+        with:
+          path: reports
+          merge-multiple: true
+
+      - name: Normalize and deduplicate
+        run: python3 triage.py reports
+
+      - name: Enrich, score and report
+        run: python3 enrich.py
+
+      - name: Show report on the run page
+        run: cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload triage report
+        uses: actions/upload-artifact@v6
+        with:
+          name: triage-report
+          path: |
+            report.md
+            prioritized.json
+
+      - name: Security gate (fail on P1)
+        run: |
+          p1=$(python3 -c "import json; print(sum(f['priority'] == 'P1' for f in json.load(open('prioritized.json'))))")
+          echo "P1 findings: $p1"
+          if [ "$p1" -gt 0 ]; then
+            echo "::error::Security gate failed: $p1 P1 findings"
+            exit 1
+          fi
