@@ -67,6 +67,17 @@ a deliberately vulnerable web application.
 Secrets found in test code are scored lower because they are usually dummy
 values that never reach production.
 
+## AI remediation guidance
+
+`remediate.py` sends the top five distinct findings to an LLM (Gemini API)
+and appends short Risk, Fix and Verify guidance to the report.
+
+- The API key is stored as an encrypted GitHub Actions secret, never in code.
+- No secret values from the scan are sent; the engine only stores a hash.
+- If a model is overloaded, the script retries and falls back to another model.
+- If every call fails, the pipeline still completes with the normal report.
+- All guidance is labelled as machine-generated and must be reviewed.
+
 ## Results
 
 From a scan of OWASP Juice Shop in November 2026:
@@ -97,7 +108,7 @@ and `zap.json`. Download them from the artifacts of any pipeline run.
 
 ## Roadmap
 
-- AI-drafted remediation guidance for the top findings
+- Show the package path for container findings instead of the image layer type
 - Allowlist for known false positives, such as public identifiers flagged as secrets
 - Upload findings to the GitHub Security tab in SARIF format
 - Pin scanner versions and actions to fixed releases
@@ -105,4 +116,4 @@ and `zap.json`. Download them from the artifacts of any pipeline run.
 ## Tech
 
 GitHub Actions, Python, Docker, Semgrep, Trivy, Gitleaks, OWASP ZAP,
-FIRST EPSS API, CISA KEV catalog.
+FIRST EPSS API, CISA KEV catalog, Gemini API.
