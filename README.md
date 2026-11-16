@@ -22,7 +22,8 @@ flowchart LR
     C --> F
     D --> F
     E --> F
-    F --> G[Prioritized report]
+    F --> I[AI remediation<br>guidance]
+    I --> G[Prioritized report]
     F --> H[Security gate]
 ```
 
@@ -101,6 +102,7 @@ Requires Python 3.12 or later. No extra packages are needed.
 ```
 py triage.py sample-reports
 py enrich.py
+py remediate.py
 ```
 
 `sample-reports` must contain `semgrep.json`, `trivy.json`, `gitleaks.json`
