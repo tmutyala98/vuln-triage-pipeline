@@ -11,6 +11,7 @@ Usage (in the pipeline):  python3 remediate.py
 import json
 import os
 import urllib.error
+import urllib.request
 
 API_URL = "https://models.github.ai/inference/chat/completions"
 MODEL = os.environ.get("TRIAGE_MODEL", "openai/gpt-4o-mini")
